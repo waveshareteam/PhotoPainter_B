@@ -93,14 +93,55 @@ bool spi_transfer(spi_t *pSPI, const uint8_t *tx, uint8_t *rx, size_t length) {
     // the FIFO could overflow)
     dma_start_channel_mask((1u << pSPI->tx_dma) | (1u << pSPI->rx_dma));
 
-    /* Timeout 1 sec */
-    uint32_t timeOut = 1000;
-    /* Wait until master completes transfer or time out has occured. */
-    bool rc = sem_acquire_timeout_ms(
-        &pSPI->sem, timeOut);  // Wait for notification from ISR
+    /* Timeout 1 sec. Pico SDK 2.0.0's timed WFE path can consume the
+       completion event before sleeping, leaving a permit at timeout.
+       Poll the semaphore without sleeping; the DMA ISR still releases it. */
+    absolute_time_t deadline = make_timeout_time_ms(1000);
+    bool rc;
+    while (!(rc = sem_try_acquire(&pSPI->sem))) {
+        if (time_reached(deadline)) {
+            // Allow a completion interrupt at the timeout boundary.
+            rc = sem_try_acquire(&pSPI->sem);
+            break;
+        }
+        tight_loop_contents();
+    }
     if (!rc) {
+        // Snapshot before USB logging can delay us. Do not read the SPI data
+        // register, clear interrupts, or abort DMA while collecting evidence.
+        uint32_t tx_count = dma_hw->ch[pSPI->tx_dma].transfer_count;
+        uint32_t rx_count = dma_hw->ch[pSPI->rx_dma].transfer_count;
+        uint32_t tx_ctrl = dma_hw->ch[pSPI->tx_dma].ctrl_trig;
+        uint32_t rx_ctrl = dma_hw->ch[pSPI->rx_dma].ctrl_trig;
+        uint32_t tx_addr = dma_hw->ch[pSPI->tx_dma].read_addr;
+        uint32_t rx_addr = dma_hw->ch[pSPI->rx_dma].write_addr;
+        uint32_t intr = dma_hw->intr;
+        uint32_t inte = irqChannel1 ? dma_hw->inte1 : dma_hw->inte0;
+        uint32_t ints = irqChannel1 ? dma_hw->ints1 : dma_hw->ints0;
+        uint32_t spi_sr = spi_get_hw(pSPI->hw_inst)->sr;
+        uint32_t spi_ris = spi_get_hw(pSPI->hw_inst)->ris;
+        uint32_t spi_dmacr = spi_get_hw(pSPI->hw_inst)->dmacr;
+        bool irq_enabled = irq_is_enabled(irqChannel1 ? DMA_IRQ_1 : DMA_IRQ_0);
+        int sem_count = sem_available(&pSPI->sem);
+
         // If the timeout is reached the function will return false
         DBG_PRINTF("Notification wait timed out in %s\n", __FUNCTION__);
+        DBG_PRINTF("SPI-DIAG port=%u len=%lu baud=%u tx_ch=%u rx_ch=%u\n",
+                   spi_get_index(pSPI->hw_inst), (unsigned long)length,
+                   spi_get_baudrate(pSPI->hw_inst), pSPI->tx_dma, pSPI->rx_dma);
+        DBG_PRINTF("SPI-DIAG TX count=%lu ctrl=0x%08lx read=0x%08lx\n",
+                   (unsigned long)tx_count, (unsigned long)tx_ctrl,
+                   (unsigned long)tx_addr);
+        DBG_PRINTF("SPI-DIAG RX count=%lu ctrl=0x%08lx write=0x%08lx\n",
+                   (unsigned long)rx_count, (unsigned long)rx_ctrl,
+                   (unsigned long)rx_addr);
+        DBG_PRINTF("SPI-DIAG IRQ%u intr=0x%08lx inte=0x%08lx ints=0x%08lx enabled=%u sem=%d\n",
+                   irqChannel1 ? 1u : 0u, (unsigned long)intr,
+                   (unsigned long)inte, (unsigned long)ints,
+                   (unsigned)irq_enabled, sem_count);
+        DBG_PRINTF("SPI-DIAG SPI sr=0x%08lx ris=0x%08lx dmacr=0x%08lx\n",
+                   (unsigned long)spi_sr, (unsigned long)spi_ris,
+                   (unsigned long)spi_dmacr);
         return false;
     }
     // Shouldn't be necessary:

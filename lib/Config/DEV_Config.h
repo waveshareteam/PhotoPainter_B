@@ -79,12 +79,12 @@
 
 #define RTC_SDA         14
 #define RTC_SCL         15
-#define RTC_INT         6
+#define RTC_INT         6   // RTC interrupt input when S1 is OFF
 
 #define EPD_POWER_EN    16
 #define CHARGE_STATE    17  // V2
 #define BAT_OFF         18
-#define BAT_STATE       19
+#define BAT_STATE       19  // K2 input; also RTC power-wakeup input when S1 is ON
 
 #define LED_ACT         25
 #define LED_PWR         26  // V2
