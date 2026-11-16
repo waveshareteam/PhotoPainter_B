@@ -48,8 +48,10 @@ static spi_t spis[] = {  // One for each SPI.
         .miso_gpio = SD_MISO_PIN,  // GPIO number (not pin number)
         .mosi_gpio = SD_MOSI_PIN,
         .sck_gpio = SD_CLK_PIN,
-        .mosi_gpio = GPIO_DRIVE_STRENGTH_2MA,
-        .sck_gpio = GPIO_DRIVE_STRENGTH_2MA,
+        // NOTE: the original code also had ".mosi_gpio = GPIO_DRIVE_STRENGTH_2MA"
+        // and ".sck_gpio = GPIO_DRIVE_STRENGTH_2MA" here, which silently
+        // overrode the pin numbers above with 0 (designated initializers: the
+        // last one wins). Pad drive strengths are left at their defaults.
 
         /* The choice of SD card matters! SanDisk runs at the highest speed. PNY
            can only mangage 5 MHz. Those are all I've tried. */
@@ -69,7 +71,10 @@ static sd_card_t sd_cards[] = {  // One for each SD card
         .spi = &spis[0],          // Pointer to the SPI driving this card
         .ss_gpio = SD_CS_PIN,             // The SPI slave select GPIO for this SD card
         //.use_card_detect = false,
-        .ss_gpio = GPIO_DRIVE_STRENGTH_4MA,
+        // NOTE: a stray ".ss_gpio = GPIO_DRIVE_STRENGTH_4MA" used to override
+        // the CS pin with GPIO1, so the driver never toggled the real CS
+        // (GPIO5): reads still worked, but multi-block writes (USB disk mode)
+        // hung until the watchdog fired.
         .m_Status = STA_NOINIT
     }
 };

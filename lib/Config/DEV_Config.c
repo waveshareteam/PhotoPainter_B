@@ -98,6 +98,11 @@ void DEV_GPIO_Mode(UWORD Pin, UWORD Mode)
 /**
  * delay x ms
 **/
+void DEV_SetStage(UBYTE stage, UWORD detail)
+{
+    watchdog_hw->scratch[2] = DIAG_STAGE_MAGIC | ((UDOUBLE)stage << 16) | detail;
+}
+
 void DEV_Delay_ms(UDOUBLE xms)
 {
 	sleep_ms(xms);
@@ -144,7 +149,15 @@ Info:
 UBYTE DEV_Module_Init(void)
 {
     stdio_init_all();
-	
+    return DEV_Hardware_Init();
+}
+
+/******************************************************************************
+function:	Initialize SPI/I2C/ADC/GPIO without starting stdio (USB serial).
+            Used by USB disk mode, which drives TinyUSB itself.
+******************************************************************************/
+UBYTE DEV_Hardware_Init(void)
+{
     spi_init(EPD_SPI_PORT, 8000 * 1000);
     gpio_set_function(EPD_CLK_PIN, GPIO_FUNC_SPI);
     gpio_set_function(EPD_MOSI_PIN, GPIO_FUNC_SPI);
@@ -165,7 +178,7 @@ UBYTE DEV_Module_Init(void)
 	// GPIO Config
 	DEV_GPIO_Init();
 
-    printf("DEV_Module_Init OK \r\n");
+    printf("DEV_Hardware_Init OK \r\n");
 	return 0;
 }
 

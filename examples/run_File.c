@@ -1,3 +1,5 @@
+#include <ctype.h>
+#include <stdbool.h>
 #include "run_File.h"
 #include "f_util.h"
 #include "pico/stdlib.h"
@@ -48,6 +50,24 @@ void run_mount() {
     sd_card_t *pSD = sd_get_by_name(arg1);
     // myASSERT(pSD);
     pSD->mounted = true;
+}
+
+/*
+    function:
+        Append one line to usbdisk_log.txt in the root of the SD card
+        (readable from the computer in USB disk mode).
+*/
+void sdAppendLog(const char *line) {
+    run_mount();
+    FIL fil;
+    FRESULT fr = f_open(&fil, "usbdisk_log.txt", FA_OPEN_APPEND | FA_WRITE);
+    if (FR_OK == fr) {
+        f_printf(&fil, "%s\r\n", line);
+        f_close(&fil);
+    } else {
+        printf("log f_open error: %s (%d)\n", FRESULT_str(fr), fr);
+    }
+    run_unmount();
 }
 
 /* 
@@ -170,6 +190,28 @@ void ls(const char *dir) {
         dir: Directory path
         path: File path
 */
+/*
+    Playable pictures: *.bmp (pre-converted) and *.jpg / *.jpeg (decoded on
+    the device). Skip folders, hidden/system files and macOS "._" metadata
+    files that a computer may create on the card.
+*/
+static bool has_ext(const char *name, const char *ext) {
+    size_t len = strlen(name), elen = strlen(ext);
+    if (len <= elen) return false;
+    const char *p = name + len - elen;
+    for (size_t i = 0; i < elen; i++) {
+        if (tolower((unsigned char)p[i]) != ext[i]) return false;
+    }
+    return true;
+}
+
+static bool is_picture_file(const FILINFO *fno) {
+    if (fno->fattrib & (AM_DIR | AM_HID | AM_SYS)) return false;
+    const char *name = fno->fname;
+    if (name[0] == '.') return false;
+    return has_ext(name, ".bmp") || has_ext(name, ".jpg") || has_ext(name, ".jpeg");
+}
+
 void ls2file(const char *dir, const char *path) {
     char cwdbuf[FF_LFN_BUF] = {0};
     FRESULT fr; /* Return value */
@@ -218,7 +260,7 @@ void ls2file(const char *dir, const char *path) {
         }
         /* Create a string that includes the file name, the file size and the
          attributes string. */
-        if(fno.fname) {
+        if(is_picture_file(&fno)) {
             // f_printf(&fil, "%d %s\r\n", filNum, fno.fname);
             f_printf(&fil, "pic/%s\r\n", fno.fname);
             filNum++;
@@ -346,10 +388,16 @@ void fil2array(int index)
 
     // printf("ls array path\r\n");
     for(int i=0; i<index; i++) {
-        if(f_gets(pathName, 999, &fil) == NULL) {
+        if(f_gets(pathName, sizeof pathName, &fil) == NULL) {
             break;
         }
         // printf("%s", pathName[i]);
+    }
+    // f_gets keeps the line ending ("pic/x.jpg\r\n"). FatFs ignores it in
+    // f_open, but anything that looks at the extension must not see it.
+    size_t len = strlen(pathName);
+    while(len > 0 && (unsigned char)pathName[len - 1] <= ' ') {
+        pathName[--len] = '\0';
     }
 
     f_close(&fil);
@@ -460,9 +508,24 @@ void updatePathIndex(void)
     int index = 1;
 
     index = getPathIndex();
-    index++;
-    if(index > scanFileNum)
-        index = 1;
+    
+    if (PlayMode == 3) {
+        if (scanFileNum > 1) {
+            srand(time_us_64());
+            int next_index = (rand() % scanFileNum) + 1;
+            if (next_index == index) {
+                next_index = (next_index % scanFileNum) + 1;
+            }
+            index = next_index;
+        } else {
+            index = 1;
+        }
+    } else {
+        index++;
+        if(index > scanFileNum)
+            index = 1;
+    }
+    
     setPathIndex(index);
     printf("updatePathIndex index is %d\r\n", index);
 }

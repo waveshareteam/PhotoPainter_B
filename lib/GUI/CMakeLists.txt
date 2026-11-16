@@ -6,4 +6,4 @@ include_directories(../Config)
 
 # Generate the link library
 add_library(GUI ${DIR_GUI_SRCS})
-target_link_libraries(GUI PUBLIC Config)
+target_link_libraries(GUI PUBLIC Config tjpgd hardware_watchdog)

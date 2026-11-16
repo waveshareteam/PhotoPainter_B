@@ -4,6 +4,7 @@
 #include "led.h"
 #include "waveshare_PCF85063.h" // RTC
 #include "DEV_Config.h"
+#include "usb_disk.h"   // USB disk mode (SD card as a USB drive)
 
 #include <time.h>
 
@@ -16,8 +17,9 @@ extern char pathName[];
 Mode 0: Automatically get pic folder names and sort them
 Mode 1: Automatically get pic folder names but not sorted
 Mode 2: pic folder name is not automatically obtained, users need to create fileList.txt file and write the picture name in TF card by themselves
+Mode 3: Automatically get pic folder names and play randomly
 */
-#define Mode 0
+int PlayMode = 3;
 
 
 float measureVBAT(void)
@@ -65,14 +67,21 @@ int main(void)
     Time_data alarmTime = Time;
     // alarmTime.seconds += 10;
     // alarmTime.minutes += 5; 
-    alarmTime.hours +=12;
+    alarmTime.hours +=1;
     char isCard = 0;
+
+    // USB disk mode: hold NEXT for 3 s while on USB (or while plugging in USB)
+    usb_disk_boot_t bootMode = usb_disk_boot_check();
+    if(bootMode == USB_DISK_BOOT_ENTER) {
+        usb_disk_run(); // never returns
+    }
   
     printf("Init...\r\n");
     if(DEV_Module_Init() != 0) {  // DEV init
         return -1;
     }
     
+    DEV_SetStage(STAGE_BOOT, 0);
     watchdog_enable(8*1000, 1);   // 8s
     DEV_Delay_ms(1000);
     PCF85063_init();    // RTC init
@@ -91,21 +100,30 @@ int main(void)
         ledPowerOn();
     }
 
+    DEV_SetStage(STAGE_SD_SCAN, 0);
+    const char *lastExit = usb_disk_last_exit();
+    if(lastExit) {
+        printf("%s\r\n", lastExit);
+    }
+
     if(!sdTest()) 
     {
         isCard = 1;
-        if(Mode == 0)
+        if(lastExit) {
+            sdAppendLog(lastExit);
+        }
+        if(PlayMode == 0)
         {
             printf("Mode 0\r\n");
             sdScanDir();
             file_sort();
         }
-        if(Mode == 1)
+        if(PlayMode == 1 || PlayMode == 3)
         {
-            printf("Mode 1\r\n");
+            printf("Mode %d\r\n", PlayMode);
             sdScanDir();
         }
-        if(Mode == 2)
+        if(PlayMode == 2)
         {
             printf("Mode 2\r\n");
             file_cat();
@@ -122,6 +140,14 @@ int main(void)
     }
     else {  // charge state
         chargeState_callback();
+        if(bootMode == USB_DISK_BOOT_REFRESH) {    // just left USB disk mode: show the new pictures
+            printf("back from USB disk mode\r\n");
+            run_display(Time, alarmTime, isCard);
+        }
+    }
+
+    while(true) {
+        DEV_SetStage(STAGE_IDLE, 0);
         while(DEV_Digital_Read(VBUS)) {
             measureVBAT();
             #if enChargingRtc
@@ -132,15 +158,36 @@ int main(void)
             #endif
 
             if(!DEV_Digital_Read(BAT_STATE)) {  // KEY pressed
+                // short press: next picture; long press: USB disk mode
+                int heldMs = 0;
+                while(!DEV_Digital_Read(BAT_STATE) && heldMs < USB_DISK_HOLD_MS) {
+                    DEV_Delay_ms(20);
+                    heldMs += 20;
+                }
+                if(heldMs >= USB_DISK_HOLD_MS) {
+                    usb_disk_request_and_reboot();  // never returns
+                }
                 printf("key interrupt\r\n");
                 run_display(Time, alarmTime, isCard);
+                DEV_SetStage(STAGE_IDLE, 0);
             }
             DEV_Delay_ms(200);
         }
+
+        printf("power off ...\r\n");
+        powerOff(); // BAT off: on battery this cuts our own power
+
+        // Still running: USB was plugged in meanwhile (e.g. during the e-paper
+        // refresh) and is powering the board. Don't return from main() (the
+        // firmware would stop and the key would do nothing); re-latch the
+        // battery and go back to the charging loop instead.
+        DEV_Delay_ms(500);
+        if(DEV_Digital_Read(VBUS)) {
+            printf("USB plugged in during power off, staying on\r\n");
+            DEV_Digital_Write(BAT_OFF, 1);
+            chargeState_callback();
+        }
     }
-    
-    printf("power off ...\r\n");
-    powerOff(); // BAT off
 
     return 0;
 }

@@ -111,6 +111,24 @@ UBYTE I2C_Read_Byte(UBYTE Reg);
 void DEV_Delay_ms(UDOUBLE xms);
 
 UBYTE DEV_Module_Init(void);
+UBYTE DEV_Hardware_Init(void);
+
+/*
+ * Progress breadcrumb for normal mode, kept in watchdog scratch[2] so that it
+ * survives a watchdog reset: the next boot can then tell where the firmware
+ * got stuck (reported by usb_disk_last_exit() and written to usbdisk_log.txt).
+ */
+#define DIAG_STAGE_MAGIC    0x53000000u     // 'S' << 24 | stage << 16 | detail
+enum {
+    STAGE_BOOT = 1,
+    STAGE_SD_SCAN,
+    STAGE_EPD_INIT,
+    STAGE_BMP_READ,
+    STAGE_JPG_DECODE,       // detail = target row being produced
+    STAGE_EPD_REFRESH,
+    STAGE_IDLE,
+};
+void DEV_SetStage(UBYTE stage, UWORD detail);
 void DEV_Module_Exit(void);
 
 #endif

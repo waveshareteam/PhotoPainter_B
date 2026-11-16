@@ -34,13 +34,27 @@
 #include "EPD_7in3e.h"
 #include "GUI_Paint.h"
 #include "GUI_BMPfile.h"
+#include "GUI_JPGfile.h"
 
 #include <stdlib.h> // malloc() free()
 #include <string.h>
+#include <ctype.h>  // tolower()
+
+static bool path_is_jpg(const char *path)
+{
+    size_t len = strlen(path);
+    const char *dot = strrchr(path, '.');
+    if (!dot || dot == path + len - 1) return false;
+    char ext[6] = {0};
+    for (int i = 0; i < 5 && dot[1 + i]; i++) ext[i] = (char)tolower((unsigned char)dot[1 + i]);
+    return strcmp(ext, "jpg") == 0 || strcmp(ext, "jpeg") == 0;
+}
 
 int EPD_7in3e_display_BMP(const char *path, float vol)
 {
+    uint64_t t_begin = time_us_64();
     printf("e-Paper Init and Clear...\r\n");
+    DEV_SetStage(STAGE_EPD_INIT, 0);
     EPD_7IN3E_Init();
 
     //Create a new image cache
@@ -61,7 +75,29 @@ int EPD_7in3e_display_BMP(const char *path, float vol)
     Paint_SelectImage(BlackImage);
     Paint_Clear(EPD_7IN3E_WHITE);
     
-    GUI_ReadBmp_RGB_6Color(path, 0, 0);
+    uint64_t t_read = time_us_64();
+    int jpgErr = 0, bmpErr = 0;
+    bool isJpg = path_is_jpg(path);
+    if (isJpg) {
+        jpgErr = GUI_ReadJpg_RGB_6Color(path);
+    } else {
+        DEV_SetStage(STAGE_BMP_READ, 0);
+        bmpErr = GUI_ReadBmp_RGB_6Color(path, 0, 0);
+    }
+    uint32_t ms_read = (uint32_t)((time_us_64() - t_read) / 1000);
+
+    if (jpgErr || bmpErr) {   // show what went wrong instead of a half-drawn picture
+        Paint_Clear(EPD_7IN3E_WHITE);
+        char msg[64];
+        if (jpgErr)
+            snprintf(msg, sizeof msg, "JPG error %d: %s", jpgErr, GUI_JpgErrorStr(jpgErr));
+        else
+            snprintf(msg, sizeof msg, "Not a 24-bit 800x480 BMP");
+        Paint_SetRotate(ROTATE_180);
+        Paint_DrawString_EN(10, 200, msg, &Font16, EPD_7IN3E_BLACK, EPD_7IN3E_WHITE);
+        Paint_DrawString_EN(10, 220, path, &Font16, EPD_7IN3E_BLACK, EPD_7IN3E_WHITE);
+        Paint_SetRotate(ROTATE_0);
+    }
 
     if(Paint_GetRotate() == 90)
         Paint_SetRotate(270);
@@ -75,9 +111,15 @@ int EPD_7in3e_display_BMP(const char *path, float vol)
     }
 
     printf("EPD_Display\r\n");
+    uint64_t t_disp = time_us_64();
+    DEV_SetStage(STAGE_EPD_REFRESH, 0);
     EPD_7IN3E_Display(BlackImage);
+    uint32_t ms_disp = (uint32_t)((time_us_64() - t_disp) / 1000);
 
     run_unmount();
+    printf("[TIME] %s: %s %lu ms, EPD refresh %lu ms, total %lu ms\r\n",
+           path, isJpg ? "JPG decode" : "BMP read", (unsigned long)ms_read,
+           (unsigned long)ms_disp, (unsigned long)((time_us_64() - t_begin) / 1000));
 #endif
     printf("Update Path Index...\r\n");
     updatePathIndex();

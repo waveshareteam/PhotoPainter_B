@@ -69,6 +69,18 @@ UBYTE GUI_ReadBmp_RGB_6Color(const char *path, UWORD Xstart, UWORD Ystart)
         printf("f_read bmpInfoHeader error\r\n");
         // printf("br is %d\n", br);
     }
+    // Only 800x480 / 480x800 24-bit BMPs (as made by convert.py) are supported.
+    // Anything else (e.g. a JPG sent here by mistake) would make the loops
+    // below run for ages on garbage sizes and trip the watchdog.
+    if(bmpFileHeader.bType != 0x4D42 || bmpInfoHeader.biBitCount != 24 ||
+       bmpInfoHeader.biWidth == 0 || bmpInfoHeader.biWidth > 800 ||
+       bmpInfoHeader.biHeight == 0 || bmpInfoHeader.biHeight > 800) {
+        printf("not a supported BMP: type 0x%04x, %lu x %lu, %u bit\r\n", bmpFileHeader.bType,
+               (unsigned long)bmpInfoHeader.biWidth, (unsigned long)bmpInfoHeader.biHeight, bmpInfoHeader.biBitCount);
+        f_close(&fil);
+        return 1;
+    }
+
     if(bmpInfoHeader.biWidth > bmpInfoHeader.biHeight)
         Paint_SetRotate(0);
     else
